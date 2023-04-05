@@ -1,12 +1,10 @@
 use std::env;
 use std::net::SocketAddr;
-use std::time::Duration;
-use anyhow::Result;
+use anyhow::{Result, Error};
 use jsonrpsee::server::{RpcModule, ServerBuilder};
 use jsonrpsee::server::middleware::proxy_get_request::ProxyGetRequestLayer;
 use tracing_subscriber::util::SubscriberInitExt;
 use tokio::signal::ctrl_c;
-use tokio::sync::oneshot;
 use tower::ServiceBuilder;
 
 #[tokio::main]
@@ -16,7 +14,10 @@ async fn main() -> Result<()> {
 	}
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()?;
 	tracing_subscriber::FmtSubscriber::builder().with_env_filter(filter).finish().try_init()?;
-    run_server().await
+    if let Err(e) = run_server().await {
+		tracing::error!("fatal error: {}", e);
+	}
+	Ok(())
 }
 
 async fn run_server() -> Result<()> {
@@ -28,15 +29,7 @@ async fn run_server() -> Result<()> {
 	let mut module = RpcModule::new(());
 	module.register_method("say_hello", |_, _| Ok("hello world!"))?;
 	let handle = server.start(module)?;
-	let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    tokio::spawn(async move {
-        ctrl_c().await.unwrap();
-        tracing::info!("received SIGINT, shutting down...");
-        if let Err(err) = handle.stop() {
-            tracing::error!("failed to gracefully shutdown the server: {:?}", err);
-        }
-        shutdown_tx.send(()).unwrap();
-    });
-    shutdown_rx.await?;
-	Ok(())
+    ctrl_c().await?;
+	tracing::info!("received SIGINT, shutting down...");
+	handle.stop().map_err(Error::from)
 }
