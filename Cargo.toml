@@ -9,6 +9,7 @@ edition = "2021"
 anyhow = "1.0.70"
 hyper = "0.14.25"
 jsonrpsee = { version = "0.16.2", features = ["full"] }
+lazy_static = "1.4.0"
 serde = "1.0.159"
 serde_json = "1.0.95"
 tokio = { version = "1.27.0", features = ["macros", "signal"] }

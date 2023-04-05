@@ -462,6 +462,7 @@ dependencies = [
  "anyhow",
  "hyper",
  "jsonrpsee",
+ "lazy_static",
  "serde",
  "serde_json",
  "tokio",

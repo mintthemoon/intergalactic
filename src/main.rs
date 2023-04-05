@@ -1,14 +1,11 @@
 mod proxy;
 mod tendermint34;
 
-use std::{env, net::SocketAddr};
-use anyhow::{Result, Error};
-use jsonrpsee::server::{RpcModule, ServerBuilder};
+use std::env;
+use anyhow::Result;
+use lazy_static::lazy_static;
 use tracing_subscriber::{util::SubscriberInitExt, EnvFilter, FmtSubscriber};
-use tokio::signal::ctrl_c;
-use tower::ServiceBuilder;
-use crate::proxy::ProxyGetRequestLayer;
-use crate::tendermint34::status;
+use crate::tendermint34::Tendermint34Backend;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -24,16 +21,8 @@ async fn main() -> Result<()> {
 }
 
 async fn run_server() -> Result<()> {
-	let service_builder = ServiceBuilder::default()
-		.layer(ProxyGetRequestLayer::new("/status", "status")?);
-	let server = ServerBuilder::default()
-		.set_middleware(service_builder)
-		.build("127.0.0.1:8080".parse::<SocketAddr>()?).await?;
-	let mut module = RpcModule::new(());
-	module.register_async_method("status", |_, _| status())?;
-	let handle = server.start(module)?;
-	tracing::info!("server started");
-    ctrl_c().await?;
-	tracing::info!("received SIGINT, shutting down...");
-	handle.stop().map_err(Error::from)
+	lazy_static! {
+		static ref BACKEND: Tendermint34Backend = Tendermint34Backend::new("https://rpc-kujira.mintthemoon.xyz:443", "127.0.0.1:8080").unwrap();
+	}
+	BACKEND.start().await
 }
