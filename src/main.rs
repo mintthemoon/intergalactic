@@ -1,11 +1,12 @@
+mod backend;
+mod config;
 mod proxy;
 mod tendermint34;
 
 use std::env;
 use anyhow::Result;
-use lazy_static::lazy_static;
 use tracing_subscriber::{util::SubscriberInitExt, EnvFilter, FmtSubscriber};
-use crate::tendermint34::Tendermint34Backend;
+use crate::backend::TENDERMINT34;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -14,15 +15,8 @@ async fn main() -> Result<()> {
 	}
     let filter = EnvFilter::try_from_default_env()?;
 	FmtSubscriber::builder().with_env_filter(filter).finish().try_init()?;
-    if let Err(e) = run_server().await {
+    if let Err(e) = TENDERMINT34.start().await {
 		tracing::error!("fatal error: {}", e);
 	}
 	Ok(())
-}
-
-async fn run_server() -> Result<()> {
-	lazy_static! {
-		static ref BACKEND: Tendermint34Backend = Tendermint34Backend::new("https://rpc-kujira.mintthemoon.xyz:443", "127.0.0.1:8080", &vec!["block_search", "tx_search"]).unwrap();
-	}
-	BACKEND.start().await
 }

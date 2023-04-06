@@ -128,9 +128,9 @@ pub struct Tendermint34Backend {
 }
 
 impl Tendermint34Backend {
-	pub fn new(url: &str, listen_addr: &str, blocked_routes: &Vec<&str>) -> Result<Self> {
+	pub fn new(url: &str, listen_addr: &str, blocked_routes: &HashSet<String>) -> Result<Self> {
 		let mut backend = Self {
-			blocked_routes: HashSet::from_iter(blocked_routes.iter().map(|s| s.to_string())),
+			blocked_routes: blocked_routes.clone(),
 			listen_addr: listen_addr.parse()?,
 			http: HttpClientBuilder::default().build(&url)?,
 			routes: HashMap::new(),
