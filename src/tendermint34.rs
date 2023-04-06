@@ -1,14 +1,14 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
 use anyhow::{Result, Error};
 use jsonrpsee::{
-	core::client::ClientT,
+	core::{client::ClientT,params::ArrayParams},
 	http_client::{HttpClientBuilder, HttpClient},
 	server::{RpcModule, ServerBuilder},
     rpc_params,
 	types::Params,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::Value as JsonValue;
 use tokio::signal::ctrl_c;
 use tower::ServiceBuilder;
 use crate::proxy::ProxyGetRequestLayer;
@@ -85,7 +85,7 @@ impl Tendermint34Status {
 
 pub struct Tendermint34Backend {
 	pub listen_addr: SocketAddr,
-	pub http: Arc<HttpClient>,
+	pub http: HttpClient,
 	pub url: String,
 }
 
@@ -93,19 +93,21 @@ impl Tendermint34Backend {
 	pub fn new(url: &str, listen_addr: &str) -> Result<Self> {
 		Ok(Self {
 			listen_addr: listen_addr.parse::<SocketAddr>()?,
-			http: Arc::new(HttpClientBuilder::default().build(&url)?),
+			http: HttpClientBuilder::default().build(&url)?,
 			url: url.to_string(),
 		})
 	}
 
 	pub async fn start(&'static self) -> Result<()> {
 		let service_builder = ServiceBuilder::default()
-			.layer(ProxyGetRequestLayer::new("/status", "status")?);
+			.layer(ProxyGetRequestLayer::new("/status", "status", vec![])?)
+			.layer(ProxyGetRequestLayer::new("/block", "block", vec!["height".to_string()])?);
 		let server = ServerBuilder::default()
 			.set_middleware(service_builder)
 			.build(self.listen_addr).await?;
 		let mut module = RpcModule::new(());
 		module.register_async_method("status", |_, _| self.status())?;
+		module.register_async_method("block", |p, _| self.proxy_call("block", p))?;
 		let handle = server.start(module)?;
 		tracing::info!("server started");
 		ctrl_c().await?;
@@ -113,9 +115,16 @@ impl Tendermint34Backend {
 		handle.stop().map_err(Error::from)
 	}
 
-	pub async fn status(&'static self) -> Result<Value, jsonrpsee::core::Error> {
+	pub async fn status(&'static self) -> Result<JsonValue, jsonrpsee::core::Error> {
 		let res = self.http.request("status", rpc_params![]).await?;
 		let status: Tendermint34Status = serde_json::from_value(res)?;
 		serde_json::to_value(status.strip_sensitive_info()).map_err(jsonrpsee::core::Error::from)
+	}
+
+	pub async fn proxy_call(&'static self, method: &str, params: Params<'static>) -> Result<JsonValue, jsonrpsee::core::Error> {
+		let params_json: Vec<JsonValue> = params.parse()?;
+		let mut params_arr = ArrayParams::new();
+		params_json.iter().map(|p| params_arr.insert(p)).collect::<Result<Vec<()>, serde_json::Error>>()?;
+		self.http.request(method, params_arr).await
 	}
 }

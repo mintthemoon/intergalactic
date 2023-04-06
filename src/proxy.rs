@@ -1,27 +1,34 @@
-use hyper::header::{ACCEPT, CONTENT_TYPE};
-use hyper::http::HeaderValue;
-use hyper::{Body, Method, Request, Response, Uri};
+use std::{
+	collections::HashMap,
+	error::Error,
+	future::Future,
+	pin::Pin,
+    sync::Arc,
+	task::{Context, Poll},
+};
+use hyper::{
+	header::{ACCEPT, CONTENT_TYPE},
+	http::HeaderValue,
+	Body, Method, Request, Response, Uri,
+};
 use jsonrpsee::types::{Id, RequestSer};
-use std::error::Error;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
+use serde_json::{value::to_raw_value, Value as JsonValue};
 use tower::{Layer, Service};
 
 #[derive(Debug, Clone)]
 pub struct ProxyGetRequestLayer {
 	path: String,
 	method: String,
+	params: Vec<String>,
 }
 
 impl ProxyGetRequestLayer {
-	pub fn new(path: impl Into<String>, method: impl Into<String>) -> Result<Self, jsonrpsee::core::Error> {
+	pub fn new(path: impl Into<String>, method: impl Into<String>, params: Vec<String>) -> Result<Self, jsonrpsee::core::Error> {
 		let path = path.into();
 		if !path.starts_with('/') {
 			return Err(jsonrpsee::core::Error::Custom("ProxyGetRequestLayer path must start with `/`".to_string()));
 		}
-		Ok(Self { path, method: method.into() })
+		Ok(Self { path, method: method.into(), params })
 	}
 }
 
@@ -29,7 +36,7 @@ impl<S> Layer<S> for ProxyGetRequestLayer {
 	type Service = ProxyGetRequest<S>;
 
 	fn layer(&self, inner: S) -> Self::Service {
-		ProxyGetRequest::new(inner, &self.path, &self.method)
+		ProxyGetRequest::new(inner, &self.path, &self.method, &self.params)
 			.expect("Path already validated in ProxyGetRequestLayer; qed")
 	}
 }
@@ -39,15 +46,16 @@ pub struct ProxyGetRequest<S> {
 	inner: S,
 	path: Arc<str>,
 	method: Arc<str>,
+	params: Arc<Vec<String>>,
 }
 
 impl<S> ProxyGetRequest<S> {
-	pub fn new(inner: S, path: &str, method: &str) -> Result<Self, jsonrpsee::core::Error> {
+	pub fn new(inner: S, path: &str, method: &str, params: &Vec<String>) -> Result<Self, jsonrpsee::core::Error> {
 		if !path.starts_with('/') {
 			return Err(jsonrpsee::core::Error::Custom(format!("ProxyGetRequest path must start with `/`, got: {}", path)));
 		}
 
-		Ok(Self { inner, path: Arc::from(path), method: Arc::from(method) })
+		Ok(Self { inner, path: Arc::from(path), method: Arc::from(method), params: Arc::from(params.clone()) })
 	}
 }
 
@@ -68,30 +76,34 @@ where
 	}
 
 	fn call(&mut self, mut req: Request<Body>) -> Self::Future {
-		let modify = self.path.as_ref() == req.uri() && req.method() == Method::GET;
-
-		// Proxy the request to the appropriate method call.
+		let modify = self.path.as_ref() == req.uri().path() && req.method() == Method::GET;
 		if modify {
-			// RPC methods are accessed with `POST`.
+			let req_params: HashMap<String, JsonValue> = req
+				.uri()
+				.query()
+				.map(|v| url::form_urlencoded::parse(v.as_bytes())
+					.into_owned()
+					.map(|(k, v)| (k, serde_json::to_value(v).expect("valid query param")))
+					.collect()
+				)
+				.unwrap_or_else(HashMap::new);
 			*req.method_mut() = Method::POST;
-			// Precautionary remove the URI.
 			*req.uri_mut() = Uri::from_static("/");
-
-			// Requests must have the following headers:
 			req.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 			req.headers_mut().insert(ACCEPT, HeaderValue::from_static("application/json"));
-
-			// Adjust the body to reflect the method call.
+			let params: JsonValue = self.params
+				.iter()
+				.map(|p| req_params.get(p).unwrap_or(&JsonValue::Null).clone())
+				.collect::<Vec<JsonValue>>()
+				.into();
+			let params_raw = to_raw_value(&params).expect("valid params");
 			let body = Body::from(
-				serde_json::to_string(&RequestSer::borrowed(&Id::Number(0), &self.method, None))
-					.expect("Valid request; qed"),
+				serde_json::to_string(&RequestSer::borrowed(&Id::Number(0), &self.method, Some(params_raw.as_ref())))
+					.expect("valid request"),
 			);
 			req = req.map(|_| body);
 		}
-
-        // Call the inner service and get a future that resolves to the response.
 		let fut = self.inner.call(req);
-
 		let res_fut = async move {
 			Ok(fut.await.map_err(|err| err.into())?)
         };
