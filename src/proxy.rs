@@ -9,57 +9,57 @@ use std::{
 use hyper::{
 	header::{ACCEPT, CONTENT_TYPE},
 	http::HeaderValue,
-	Body, Method, Request, Response, Uri,
+	Body, Method, Request, Response, Uri, StatusCode,
 };
 use jsonrpsee::types::{Id, RequestSer};
 use serde_json::{value::to_raw_value, Value as JsonValue};
 use tower::{Layer, Service};
 
 #[derive(Debug, Clone)]
-pub struct ProxyGetRequestLayer {
+pub struct ProxyGetRequestParamsLayer {
 	path: String,
 	method: String,
 	params: Vec<String>,
 }
 
-impl ProxyGetRequestLayer {
+impl ProxyGetRequestParamsLayer {
 	pub fn new(path: impl Into<String>, method: impl Into<String>, params: Vec<String>) -> Result<Self, jsonrpsee::core::Error> {
 		let path = path.into();
 		if !path.starts_with('/') {
-			return Err(jsonrpsee::core::Error::Custom("ProxyGetRequestLayer path must start with `/`".to_string()));
+			return Err(jsonrpsee::core::Error::Custom("ProxyGetRequestParamsLayer path must start with `/`".to_string()));
 		}
 		Ok(Self { path, method: method.into(), params })
 	}
 }
 
-impl<S> Layer<S> for ProxyGetRequestLayer {
-	type Service = ProxyGetRequest<S>;
+impl<S> Layer<S> for ProxyGetRequestParamsLayer {
+	type Service = ProxyGetRequestParams<S>;
 
 	fn layer(&self, inner: S) -> Self::Service {
-		ProxyGetRequest::new(inner, &self.path, &self.method, &self.params)
-			.expect("Path already validated in ProxyGetRequestLayer; qed")
+		ProxyGetRequestParams::new(inner, &self.path, &self.method, &self.params)
+			.expect("Path already validated in ProxyGetRequestParamsLayer; qed")
 	}
 }
 
 #[derive(Debug, Clone)]
-pub struct ProxyGetRequest<S> {
+pub struct ProxyGetRequestParams<S> {
 	inner: S,
 	path: Arc<str>,
 	method: Arc<str>,
 	params: Arc<Vec<String>>,
 }
 
-impl<S> ProxyGetRequest<S> {
+impl<S> ProxyGetRequestParams<S> {
 	pub fn new(inner: S, path: &str, method: &str, params: &Vec<String>) -> Result<Self, jsonrpsee::core::Error> {
 		if !path.starts_with('/') {
-			return Err(jsonrpsee::core::Error::Custom(format!("ProxyGetRequest path must start with `/`, got: {}", path)));
+			return Err(jsonrpsee::core::Error::Custom(format!("ProxyGetRequestParams path must start with `/`, got: {}", path)));
 		}
 
 		Ok(Self { inner, path: Arc::from(path), method: Arc::from(method), params: Arc::from(params.clone()) })
 	}
 }
 
-impl<S> Service<Request<Body>> for ProxyGetRequest<S>
+impl<S> Service<Request<Body>> for ProxyGetRequestParams<S>
 where
 	S: Service<Request<Body>, Response = Response<Body>>,
 	S::Response: 'static,
@@ -102,6 +102,88 @@ where
 					.expect("valid request"),
 			);
 			req = req.map(|_| body);
+		}
+		let fut = self.inner.call(req);
+		let res_fut = async move {
+			Ok(fut.await.map_err(|err| err.into())?)
+        };
+        Box::pin(res_fut)
+    }
+}
+
+#[derive(Clone)]
+pub struct ProxyGetRequestCustomLayer {
+	path: String,
+	func: &'static dyn Fn(&Request<Body>) -> String,
+}
+
+unsafe impl Send for ProxyGetRequestCustomLayer {}
+
+impl ProxyGetRequestCustomLayer {
+	pub fn new(path: impl Into<String>, func: &'static impl Fn(&Request<Body>) -> String) -> Result<Self, jsonrpsee::core::Error> {
+		let path = path.into();
+		if !path.starts_with('/') {
+			return Err(jsonrpsee::core::Error::Custom("ProxyGetRequestCustomLayer path must start with `/`".to_string()));
+		}
+		Ok(Self { path, func })
+	}
+}
+
+impl<S> Layer<S> for ProxyGetRequestCustomLayer {
+	type Service = ProxyGetRequestCustom<S>;
+
+	fn layer(&self, inner: S) -> Self::Service {
+		ProxyGetRequestCustom::new(inner, &self.path, self.func)
+			.expect("Path already validated in ProxyGetRequestCustomLayer; qed")
+	}
+}
+
+#[derive(Clone)]
+pub struct ProxyGetRequestCustom<S> {
+	inner: S,
+	path: Arc<str>,
+	func: &'static dyn Fn(&Request<Body>) -> String,
+}
+
+unsafe impl<S> Send for ProxyGetRequestCustom<S> {}
+
+impl<S> ProxyGetRequestCustom<S> {
+	pub fn new(inner: S, path: &str, func: &'static dyn Fn(&Request<Body>) -> String) -> Result<Self, jsonrpsee::core::Error> {
+		if !path.starts_with('/') {
+			return Err(jsonrpsee::core::Error::Custom(format!("ProxyGetRequestCustom path must start with `/`, got: {}", path)));
+		}
+
+		Ok(Self { inner, path: Arc::from(path), func })
+	}
+}
+
+impl<S> Service<Request<Body>> for ProxyGetRequestCustom<S>
+where
+	S: Service<Request<Body>, Response = Response<Body>>,
+	S::Response: 'static,
+	S::Error: Into<Box<dyn Error + Send + Sync>> + 'static,
+	S::Future: Send + 'static,
+{
+	type Response = S::Response;
+	type Error = Box<dyn Error + Send + Sync + 'static>;
+	type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
+
+	#[inline]
+	fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		self.inner.poll_ready(cx).map_err(Into::into)
+	}
+
+	fn call(&mut self, req: Request<Body>) -> Self::Future {
+		let modify = self.path.as_ref() == req.uri().path() && req.method() == Method::GET;
+		if modify {
+			let content = (self.func)(&req);
+			let res_fut = async move {
+				Response::builder()
+					.status(StatusCode::OK)
+					.body(Body::from(content))
+					.map_err(Into::into)
+			};
+			return Box::pin(res_fut);
 		}
 		let fut = self.inner.call(req);
 		let res_fut = async move {
