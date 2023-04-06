@@ -1,8 +1,8 @@
-use std::net::SocketAddr;
-use anyhow::{Result, Error};
+use std::{collections::{HashMap, HashSet}, net::SocketAddr};
+use anyhow::{anyhow, Result, Error};
 use hyper::{Body, Request};
 use jsonrpsee::{
-	core::{client::ClientT,params::ArrayParams},
+	core::{client::ClientT, params::ArrayParams, Error as RpcError},
 	http_client::{HttpClientBuilder, HttpClient},
 	server::{RpcModule, ServerBuilder},
     rpc_params,
@@ -84,87 +84,140 @@ impl Tendermint34Status {
 	}
 }
 
+pub type Tendermint34Params = Vec<String>;
+
+pub fn make_params(params: Vec<impl Into<String>>) -> Tendermint34Params {
+	params.into_iter().map(Into::into).collect()
+}
+
+pub struct Tendermint34Route {
+	pub method: String,
+	pub params: Tendermint34Params,
+}
+
+impl Tendermint34Route {
+	pub fn new(method: String, params: Tendermint34Params) -> Self {
+		Self {
+			method,
+			params,
+		}
+	}
+
+	pub fn proxy_get_layer(&self, path: String) -> Result<ProxyGetRequestParamsLayer, RpcError> {
+		ProxyGetRequestParamsLayer::new(path, self.method.clone(), self.params.clone())
+	}
+
+	pub fn register_method(&'static self, backend: &'static Tendermint34Backend, module: &mut RpcModule<()>) -> Result<(), RpcError> {
+		if backend.blocked_routes.contains(&self.method) {
+			module.register_method(&self.method, |_, _| Err::<JsonValue, RpcError>(RpcError::Custom("method not supported".to_string())))?;
+		} else if self.method == "status" {
+			module.register_async_method(&self.method, |_, _| backend.status())?;
+		} else {
+			module.register_async_method(&self.method, |p, _| backend.proxy_call(&self.method, p))?;
+		}
+		Ok(())
+	}
+}
+
 pub struct Tendermint34Backend {
+	pub blocked_routes: HashSet<String>,
 	pub listen_addr: SocketAddr,
 	pub http: HttpClient,
+	pub routes: HashMap<String, Tendermint34Route>,
 	pub url: String,
 }
 
 impl Tendermint34Backend {
-	pub fn new(url: &str, listen_addr: &str) -> Result<Self> {
-		Ok(Self {
-			listen_addr: listen_addr.parse::<SocketAddr>()?,
+	pub fn new(url: &str, listen_addr: &str, blocked_routes: &Vec<&str>) -> Result<Self> {
+		let mut backend = Self {
+			blocked_routes: HashSet::from_iter(blocked_routes.iter().map(|s| s.to_string())),
+			listen_addr: listen_addr.parse()?,
 			http: HttpClientBuilder::default().build(&url)?,
+			routes: HashMap::new(),
 			url: url.to_string(),
-		})
+		};
+		backend.add_proxy_route("/abci_info", "abci_info", vec![]);
+		backend.add_proxy_route("/abci_query", "abci_query", make_params(vec!["path", "data", "height", "prove"]));
+		backend.add_proxy_route("/block", "block", make_params(vec!["height"]));
+		backend.add_proxy_route("/block_by_hash", "block_by_hash", make_params(vec!["hash"]));
+		backend.add_proxy_route("/block_results", "block_results", make_params(vec!["height"]));
+		backend.add_proxy_route("/block_search", "block_search", make_params(vec!["query", "page", "per_page", "order_by", "match_events"]));
+		backend.add_proxy_route("/blockchain", "blockchain", make_params(vec!["minHeight", "maxHeight"]));
+		backend.add_proxy_route("/broadcast_evidence", "broadcast_evidence", make_params(vec!["evidence"]));
+		backend.add_proxy_route("/broadcast_tx_async", "broadcast_tx_async", make_params(vec!["tx"]));
+		backend.add_proxy_route("/broadcast_tx_commit", "broadcast_tx_commit", make_params(vec!["tx"]));
+		backend.add_proxy_route("/broadcast_tx_sync", "broadcast_tx_sync", make_params(vec!["tx"]));
+		backend.add_proxy_route("/check_tx", "check_tx", make_params(vec!["tx"]));
+		backend.add_proxy_route("/commit", "commit", make_params(vec!["height"]));
+		backend.add_proxy_route("/consensus_params", "consensus_params", make_params(vec!["height"]));
+		backend.add_proxy_route("/consensus_state", "consensus_state", vec![]);
+		backend.add_proxy_route("/dump_consensus_state", "dump_consensus_state", vec![]);
+		backend.add_proxy_route("/genesis", "genesis", vec![]);
+		backend.add_proxy_route("/genesis_chunked", "genesis_chunked", make_params(vec!["chunk"]));
+		backend.add_proxy_route("/health", "health", vec![]);
+		backend.add_proxy_route("/net_info", "net_info", vec![]);
+		backend.add_proxy_route("/num_unconfirmed_txs", "num_unconfirmed_txs", vec![]);
+		backend.add_proxy_route("/status", "status", vec![]);
+		backend.add_proxy_route("/subscribe", "subscribe", make_params(vec!["query"]));
+		backend.add_proxy_route("/tx", "tx", make_params(vec!["hash", "prove"]));
+		backend.add_proxy_route("/tx_search", "tx_search", make_params(vec!["query", "page", "per_page", "order_by", "match_events"]));
+		backend.add_proxy_route("/unconfirmed_txs", "unconfirmed_txs", make_params(vec!["limit"]));
+		backend.add_proxy_route("/unsubscribe_all", "unsubscribe_all", vec![]);
+		backend.add_proxy_route("/unsubscribe", "unsubscribe", make_params(vec!["query"]));
+		backend.add_proxy_route("/validators", "validators", make_params(vec!["height", "page", "per_page"]));
+		Ok(backend)
+	}
+
+	pub fn add_proxy_route(&mut self, path: impl Into<String>, method: impl Into<String>, params: Tendermint34Params) {
+		self.routes.insert(path.into(), Tendermint34Route::new(method.into(), params));
+	}
+
+	pub fn route_proxy_layer(&self, path: impl Into<String>) -> Result<ProxyGetRequestParamsLayer> {
+		let path = path.into();
+		let route = self.routes.get(&path).ok_or(anyhow!("route not found: {}", path))?;
+		route.proxy_get_layer(path).map_err(Error::from)
 	}
 
 	pub async fn start(&'static self) -> Result<()> {
-		
 		let service_builder = ServiceBuilder::default()
-			.layer(ProxyGetRequestParamsLayer::new("/abci_info", "acbi_info", vec![])?)
-			.layer(ProxyGetRequestParamsLayer::new("/abci_query", "acbi_query", vec!["path".to_string(), "data".to_string(), "height".to_string(), "prove".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/block", "block", vec!["height".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/block_by_hash", "block_by_hash", vec!["hash".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/block_results", "block_results", vec!["height".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/block_search", "block_search", vec!["query".to_string(), "page".to_string(), "per_page".to_string(), "order_by".to_string(), "match_events".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/blockchain", "blockchain", vec!["minHeight".to_string(), "maxHeight".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/broadcast_evidence", "broadcast_evidence", vec!["evidence".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/broadcast_tx_async", "broadcast_tx_async", vec!["tx".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/broadcast_tx_commit", "broadcast_tx_commit", vec!["tx".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/broadcast_tx_sync", "broadcast_tx_sync", vec!["tx".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/check_tx", "check_tx", vec!["tx".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/commit", "commit", vec!["height".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/consensus_params", "consensus_params", vec!["height".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/consensus_state", "consensus_state", vec![])?)
-			.layer(ProxyGetRequestParamsLayer::new("/dump_consensus_state", "dump_consensus_state", vec![])?)
-			.layer(ProxyGetRequestParamsLayer::new("/genesis", "genesis", vec![])?)
-			.layer(ProxyGetRequestParamsLayer::new("/genesis_chunked", "genesis_chunked", vec!["chunk".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/health", "health", vec![])?)
-			.layer(ProxyGetRequestParamsLayer::new("/net_info", "net_info", vec![])?)
-			.layer(ProxyGetRequestParamsLayer::new("/num_unconfirmed_txs", "num_unconfirmed_txs", vec![])?)
-			.layer(ProxyGetRequestParamsLayer::new("/status", "status", vec![])?)
-			.layer(ProxyGetRequestParamsLayer::new("/subscribe", "subscribe", vec!["query".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/tx", "tx", vec!["hash".to_string(), "prove".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/tx_search", "tx_search", vec!["query".to_string(), "prove".to_string(), "page".to_string(), "per_page".to_string(), "order_by".to_string(), "match_events".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/unconfirmed_txs", "unconfirmed_txs", vec!["limit".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/unsubscribe", "unsubscribe", vec!["query".to_string()])?)
-			.layer(ProxyGetRequestParamsLayer::new("/unsubscribe_all", "unsubscribe_all", vec![])?)
-			.layer(ProxyGetRequestParamsLayer::new("/validators", "validators", vec!["height".to_string(), "page".to_string(), "per_page".to_string()])?)
+			.layer(self.route_proxy_layer("/abci_info")?)
+			.layer(self.route_proxy_layer("/abci_query")?)
+			.layer(self.route_proxy_layer("/block")?)
+			.layer(self.route_proxy_layer("/block_by_hash")?)
+			.layer(self.route_proxy_layer("/block_results")?)
+			.layer(self.route_proxy_layer("/block_search")?)
+			.layer(self.route_proxy_layer("/blockchain")?)
+			.layer(self.route_proxy_layer("/broadcast_evidence")?)
+			.layer(self.route_proxy_layer("/broadcast_tx_async")?)
+			.layer(self.route_proxy_layer("/broadcast_tx_commit")?)
+			.layer(self.route_proxy_layer("/broadcast_tx_sync")?)
+			.layer(self.route_proxy_layer("/check_tx")?)
+			.layer(self.route_proxy_layer("/commit")?)
+			.layer(self.route_proxy_layer("/consensus_params")?)
+			.layer(self.route_proxy_layer("/consensus_state")?)
+			.layer(self.route_proxy_layer("/dump_consensus_state")?)
+			.layer(self.route_proxy_layer("/genesis")?)
+			.layer(self.route_proxy_layer("/genesis_chunked")?)
+			.layer(self.route_proxy_layer("/health")?)
+			.layer(self.route_proxy_layer("/net_info")?)
+			.layer(self.route_proxy_layer("/num_unconfirmed_txs")?)
+			.layer(self.route_proxy_layer("/status")?)
+			.layer(self.route_proxy_layer("/subscribe")?)
+			.layer(self.route_proxy_layer("/tx")?)
+			.layer(self.route_proxy_layer("/tx_search")?)
+			.layer(self.route_proxy_layer("/unconfirmed_txs")?)
+			.layer(self.route_proxy_layer("/unsubscribe")?)
+			.layer(self.route_proxy_layer("/unsubscribe_all")?)
+			.layer(self.route_proxy_layer("/validators")?)
 			.layer(ProxyGetRequestCustomLayer::new("/", &root_html_proxy_call)?);
 		let server = ServerBuilder::default()
 			.set_middleware(service_builder)
 			.build(self.listen_addr).await?;
 		let mut module = RpcModule::new(());
-		module.register_async_method("abci_info", |p, _| self.proxy_call("abci_info", p))?;
-		module.register_async_method("abci_query", |p, _| self.proxy_call("abci_query", p))?;
-		module.register_async_method("block", |p, _| self.proxy_call("block", p))?;
-		module.register_async_method("block_by_hash", |p, _| self.proxy_call("block_by_hash", p))?;
-		module.register_async_method("block_results", |p, _| self.proxy_call("block_results", p))?;
-		module.register_method("block_search", |_, _| blocked_call())?;
-		module.register_async_method("blockchain", |p, _| self.proxy_call("blockchain", p))?;
-		module.register_async_method("broadcast_evidence", |p, _| self.proxy_call("broadcast_evidence", p))?;
-		module.register_async_method("broadcast_tx_async", |p, _| self.proxy_call("broadcast_tx_async", p))?;
-		module.register_async_method("broadcast_tx_commit", |p, _| self.proxy_call("broadcast_tx_commit", p))?;
-		module.register_async_method("broadcast_tx_sync", |p, _| self.proxy_call("broadcast_tx_sync", p))?;
-		module.register_async_method("check_tx", |p, _| self.proxy_call("check_tx", p))?;
-		module.register_async_method("commit", |p, _| self.proxy_call("commit", p))?;
-		module.register_async_method("consensus_params", |p, _| self.proxy_call("consensus_params", p))?;
-		module.register_async_method("consensus_state", |p, _| self.proxy_call("consensus_state", p))?;
-		module.register_async_method("dump_consensus_state", |p, _| self.proxy_call("dump_consensus_state", p))?;
-		module.register_async_method("genesis", |p, _| self.proxy_call("genesis", p))?;
-		module.register_async_method("genesis_chunked", |p, _| self.proxy_call("genesis_chunked", p))?;
-		module.register_async_method("health", |p, _| self.proxy_call("health", p))?;
-		module.register_async_method("net_info", |p, _| self.proxy_call("net_info", p))?;
-		module.register_async_method("num_unconfirmed_txs", |p, _| self.proxy_call("num_unconfirmed_txs", p))?;
-		module.register_async_method("status", |_, _| self.status())?;
-		module.register_async_method("subscribe", |p, _| self.proxy_call("subscribe", p))?;
-		module.register_async_method("tx", |p, _| self.proxy_call("tx", p))?;
-		module.register_method("tx_search", |_, _| blocked_call())?;
-		module.register_async_method("unconfirmed_txs", |p, _| self.proxy_call("unconfirmed_txs", p))?;
-		module.register_async_method("unsubscribe", |p, _| self.proxy_call("unsubscribe", p))?;
-		module.register_async_method("unsubscribe_all", |p, _| self.proxy_call("unsubscribe_all", p))?;
-		module.register_async_method("validators", |p, _| self.proxy_call("validators", p))?;
+		self.routes
+			.iter()
+			.map(|(_, route)| route.register_method(&self, &mut module))
+			.collect::<Result<Vec<_>, RpcError>>()?;
 		let handle = server.start(module)?;
 		tracing::info!("server started");
 		ctrl_c().await?;
@@ -172,22 +225,18 @@ impl Tendermint34Backend {
 		handle.stop().map_err(Error::from)
 	}
 
-	pub async fn status(&'static self) -> Result<JsonValue, jsonrpsee::core::Error> {
+	pub async fn status(&'static self) -> Result<JsonValue, RpcError> {
 		let res = self.http.request("status", rpc_params![]).await?;
 		let status: Tendermint34Status = serde_json::from_value(res)?;
-		serde_json::to_value(status.strip_sensitive_info()).map_err(jsonrpsee::core::Error::from)
+		serde_json::to_value(status.strip_sensitive_info()).map_err(RpcError::from)
 	}
 
-	pub async fn proxy_call(&'static self, method: &str, params: Params<'static>) -> Result<JsonValue, jsonrpsee::core::Error> {
+	pub async fn proxy_call(&'static self, method: &str, params: Params<'static>) -> Result<JsonValue, RpcError> {
 		let params_json: Vec<JsonValue> = params.parse()?;
 		let mut params_arr = ArrayParams::new();
 		params_json.iter().map(|p| params_arr.insert(p)).collect::<Result<Vec<()>, serde_json::Error>>()?;
 		self.http.request(method, params_arr).await
 	}
-}
-
-pub fn blocked_call() -> Result<JsonValue, jsonrpsee::core::Error> {
-	Err(jsonrpsee::core::Error::Custom("method not supported".to_string()))
 }
 
 pub fn root_html_proxy_call(req: &Request<Body>) -> String {

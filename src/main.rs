@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
 
 async fn run_server() -> Result<()> {
 	lazy_static! {
-		static ref BACKEND: Tendermint34Backend = Tendermint34Backend::new("https://rpc-kujira.mintthemoon.xyz:443", "127.0.0.1:8080").unwrap();
+		static ref BACKEND: Tendermint34Backend = Tendermint34Backend::new("https://rpc-kujira.mintthemoon.xyz:443", "127.0.0.1:8080", &vec!["block_search", "tx_search"]).unwrap();
 	}
 	BACKEND.start().await
 }
