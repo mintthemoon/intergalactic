@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, net::SocketAddr};
+use std::{collections::{HashMap, HashSet}, net::SocketAddr, time::Duration};
 use anyhow::{anyhow, Result, Error};
 use hyper::{Body, Request};
 use jsonrpsee::{
@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tokio::signal::ctrl_c;
 use tower::ServiceBuilder;
+use crate::config::Config;
 use crate::proxy::{ProxyGetRequestParamsLayer, ProxyGetRequestCustomLayer};
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -125,16 +126,52 @@ pub struct Tendermint34Backend {
 	pub http: HttpClient,
 	pub routes: HashMap<String, Tendermint34Route>,
 	pub url: String,
+	pub max_connections: u32,
+    pub max_subscriptions_per_connection: u32,
+    pub max_request_body_size_bytes: u32,
+    pub max_response_body_size_bytes: u32,
+    pub ws_ping_interval_seconds: u32,
+}
+
+impl TryFrom<Config> for Tendermint34Backend {
+	type Error = Error;
+
+	fn try_from(config: Config) -> Result<Self> {
+		Self::new(
+			&config.rpc_addr,
+			&config.listen_addr,
+			&config.blocked_routes,
+			config.max_connections,
+			config.max_subscriptions_per_connection,
+			config.max_request_body_size_bytes,
+			config.max_response_body_size_bytes,
+			config.ws_ping_interval_seconds,
+		)
+	}
 }
 
 impl Tendermint34Backend {
-	pub fn new(url: &str, listen_addr: &str, blocked_routes: &HashSet<String>) -> Result<Self> {
+	pub fn new(
+		url: &str,
+		listen_addr: &str,
+		blocked_routes: &HashSet<String>,
+		max_connections: u32,
+    	max_subscriptions_per_connection: u32,
+    	max_request_body_size_bytes: u32,
+    	max_response_body_size_bytes: u32,
+   		ws_ping_interval_seconds: u32,
+	) -> Result<Self> {
 		let mut backend = Self {
 			blocked_routes: blocked_routes.clone(),
 			listen_addr: listen_addr.parse()?,
 			http: HttpClientBuilder::default().build(&url)?,
 			routes: HashMap::new(),
 			url: url.to_string(),
+			max_connections,
+			max_subscriptions_per_connection,
+			max_request_body_size_bytes,
+			max_response_body_size_bytes,
+			ws_ping_interval_seconds,
 		};
 		backend.add_proxy_route("/abci_info", "abci_info", vec![]);
 		backend.add_proxy_route("/abci_query", "abci_query", make_params(vec!["path", "data", "height", "prove"]));
@@ -211,6 +248,11 @@ impl Tendermint34Backend {
 			.layer(self.route_proxy_layer("/validators")?)
 			.layer(ProxyGetRequestCustomLayer::new("/", &root_html_proxy_call)?);
 		let server = ServerBuilder::default()
+			.max_connections(self.max_connections)
+			.max_subscriptions_per_connection(self.max_subscriptions_per_connection)
+			.max_request_body_size(self.max_request_body_size_bytes)
+			.max_response_body_size(self.max_response_body_size_bytes)
+			.ping_interval(Duration::from_secs(self.ws_ping_interval_seconds.into()))
 			.set_middleware(service_builder)
 			.build(self.listen_addr).await?;
 		let mut module = RpcModule::new(());
