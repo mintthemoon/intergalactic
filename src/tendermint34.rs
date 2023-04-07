@@ -6,7 +6,7 @@ use jsonrpsee::{
 	http_client::{HttpClientBuilder, HttpClient},
 	server::{RpcModule, ServerBuilder},
     rpc_params,
-	types::Params,
+	types::{error::CallError, Params},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -245,6 +245,11 @@ impl Tendermint34Backend {
 				params
 			},
 			JsonValue::Array(a) => {
+				if a.len() != method_params.len() {
+					return Err(RpcError::Call(CallError::InvalidParams(
+						anyhow!("expected {} parameter(s) [{}], got {}", method_params.len(), method_params.join(", "), a.len())
+					)));
+				}
 				let mut params = ArrayParams::new();
 				a.iter().map(|p| params.insert(p)).collect::<Result<Vec<()>, serde_json::Error>>()?;
 				params
