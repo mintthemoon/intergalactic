@@ -1,6 +1,6 @@
 use std::{collections::{HashMap, HashSet}, net::SocketAddr, time::Duration};
 use anyhow::{anyhow, Result, Error};
-use hyper::{Body, Request};
+use hyper::{Body, Request, Method};
 use jsonrpsee::{
 	core::{client::ClientT, params::ArrayParams, Error as RpcError},
 	http_client::{HttpClientBuilder, HttpClient},
@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tokio::signal::ctrl_c;
 use tower::ServiceBuilder;
+use tower_http::cors::{CorsLayer, Any};
 use crate::config::Config;
 use crate::proxy::{ProxyGetRequestParamsLayer, ProxyGetRequestCustomLayer};
 
@@ -246,7 +247,8 @@ impl Comet34Backend {
 			.layer(self.route_proxy_layer("/unsubscribe")?)
 			.layer(self.route_proxy_layer("/unsubscribe_all")?)
 			.layer(self.route_proxy_layer("/validators")?)
-			.layer(ProxyGetRequestCustomLayer::new("/", &root_html_proxy_call)?);
+			.layer(ProxyGetRequestCustomLayer::new("/", &root_html_proxy_call)?)
+			.layer(CorsLayer::new().allow_methods(vec![Method::GET, Method::POST]).allow_origin(Any).allow_headers(Any));
 		let server = ServerBuilder::default()
 			.max_connections(self.max_connections)
 			.max_subscriptions_per_connection(self.max_subscriptions_per_connection)
