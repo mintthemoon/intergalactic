@@ -108,12 +108,12 @@ impl Tendermint34Route {
 	}
 
 	pub fn register_method(&'static self, backend: &'static Tendermint34Backend, module: &mut RpcModule<()>) -> Result<(), RpcError> {
-		if backend.blocked_routes.contains(&self.method) {
-			module.register_method(&self.method, |_, _| Err::<JsonValue, RpcError>(RpcError::Custom("method not supported".to_string())))?;
-		} else if self.method == "status" {
-			module.register_async_method(&self.method, |_, _| backend.status())?;
-		} else {
-			module.register_async_method(&self.method, |p, _| backend.proxy_call(&self.method, p))?;
+		if !backend.blocked_routes.contains(&self.method) {
+			if self.method == "status" {
+				module.register_async_method(&self.method, |_, _| backend.status())?;
+			} else {
+				module.register_async_method(&self.method, |p, _| backend.proxy_call(&self.method, p))?;
+			}
 		}
 		Ok(())
 	}
@@ -232,10 +232,26 @@ impl Tendermint34Backend {
 	}
 
 	pub async fn proxy_call(&'static self, method: &str, params: Params<'static>) -> Result<JsonValue, RpcError> {
-		let params_json: Vec<JsonValue> = params.parse()?;
-		let mut params_arr = ArrayParams::new();
-		params_json.iter().map(|p| params_arr.insert(p)).collect::<Result<Vec<()>, serde_json::Error>>()?;
-		self.http.request(method, params_arr).await
+		let params_json: JsonValue = params.parse()?;
+		let method_params = &self.routes.get(&format!("/{}", method))
+			.ok_or(RpcError::MethodNotFound(method.to_string()))?.params;
+		let params = match params_json {
+			JsonValue::Object(o) => {
+				let mut params = ArrayParams::new();
+				method_params.iter()
+					.map(|p| params.insert(o.get(p)
+					.unwrap_or(&JsonValue::Null)))
+					.collect::<Result<Vec<()>, serde_json::Error>>()?;
+				params
+			},
+			JsonValue::Array(a) => {
+				let mut params = ArrayParams::new();
+				a.iter().map(|p| params.insert(p)).collect::<Result<Vec<()>, serde_json::Error>>()?;
+				params
+			},
+			_ => ArrayParams::new(),
+		};
+		self.http.request(method, params).await
 	}
 }
 
