@@ -10,6 +10,9 @@ anyhow = "1.0.70"
 hyper = "0.14.25"
 jsonrpsee = { version = "0.16.2", features = ["full"] }
 lazy_static = "1.4.0"
+rand = "0.8.5"
+rand_core = "0.6.4"
+rbase64 = "2.0.3"
 serde = "1.0.159"
 serde_json = { version = "1.0.95", features = ["raw_value", "preserve_order"] }
 strum = "0.24.1"

@@ -8,6 +8,8 @@ use jsonrpsee::{
     rpc_params,
 	types::{error::CallError, Params},
 };
+use rand::{distributions::{Slice, Distribution}, Rng};
+use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tokio::signal::ctrl_c;
@@ -61,6 +63,27 @@ pub struct Comet34ValidatorInfo {
 	pub voting_power: String,
 }
 
+impl Comet34ValidatorInfo {
+	const ADDR_CHARS: [char; 36] = [
+		'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+		'0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+	];
+
+	pub fn new() -> Result<Self> {
+		let mut rng = OsRng::default();
+		let address = Slice::new(&Self::ADDR_CHARS)?.sample_iter(&mut rng).take(40).collect::<String>();
+		let pub_key_bytes = rng.gen::<[u8; 32]>();
+        Ok(Self {
+            address,
+            pub_key: Comet34PubKey {
+				type_: "tendermint/PubKeyEd25519".to_string(),
+				value: rbase64::encode(&pub_key_bytes),
+			},
+            voting_power: "0".to_string(),
+        })
+	}
+}
+
 #[derive(Deserialize, Serialize, Clone)]
 pub struct Comet34PubKey {
 	#[serde(rename = "type")]
@@ -76,12 +99,13 @@ pub struct Comet34Status {
 }
 
 impl Comet34Status {
-	pub fn strip_sensitive_info(&self) -> Self {
+	pub fn strip_sensitive_info(&self, validator_info: Option<&Comet34ValidatorInfo>) -> Self {
 		let mut status = self.clone();
 		status.node_info.moniker = "REDACTED".to_string();
 		status.node_info.listen_addr = "REDACTED".to_string();
 		status.node_info.other.rpc_address = "REDACTED".to_string();
 		status.node_info.version = "REDACTED".to_string();
+		validator_info.map(|v| status.validator_info = v.clone());
 		status
 	}
 }
@@ -132,6 +156,7 @@ pub struct Comet34Backend {
     pub max_request_body_size_bytes: u32,
     pub max_response_body_size_bytes: u32,
     pub ws_ping_interval_seconds: u32,
+	pub validator_info: Comet34ValidatorInfo,
 }
 
 impl TryFrom<Config> for Comet34Backend {
@@ -147,6 +172,7 @@ impl TryFrom<Config> for Comet34Backend {
 			config.max_request_body_size_bytes,
 			config.max_response_body_size_bytes,
 			config.ws_ping_interval_seconds,
+			Comet34ValidatorInfo::new()?,
 		)
 	}
 }
@@ -161,6 +187,7 @@ impl Comet34Backend {
     	max_request_body_size_bytes: u32,
     	max_response_body_size_bytes: u32,
    		ws_ping_interval_seconds: u32,
+		validator_info: Comet34ValidatorInfo,
 	) -> Result<Self> {
 		let mut backend = Self {
 			blocked_routes: blocked_routes.clone(),
@@ -173,6 +200,7 @@ impl Comet34Backend {
 			max_request_body_size_bytes,
 			max_response_body_size_bytes,
 			ws_ping_interval_seconds,
+			validator_info,
 		};
 		backend.add_proxy_route("/abci_info", "abci_info", vec![]);
 		backend.add_proxy_route("/abci_query", "abci_query", make_params(vec!["path", "data", "height", "prove"]));
@@ -272,7 +300,7 @@ impl Comet34Backend {
 	pub async fn status(&'static self) -> Result<JsonValue, RpcError> {
 		let res = self.http.request("status", rpc_params![]).await?;
 		let status: Comet34Status = serde_json::from_value(res)?;
-		serde_json::to_value(status.strip_sensitive_info()).map_err(RpcError::from)
+		serde_json::to_value(status.strip_sensitive_info(Some(&self.validator_info))).map_err(RpcError::from)
 	}
 
 	pub async fn proxy_call(&'static self, method: &str, params: Params<'static>) -> Result<JsonValue, RpcError> {
