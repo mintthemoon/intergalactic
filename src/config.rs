@@ -6,7 +6,7 @@ use strum_macros::EnumString;
 
 #[derive(Clone, EnumString, Deserialize, Serialize)]
 pub enum Backend {
-    Tendermint34
+    Comet34
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -77,7 +77,7 @@ pub const ENV_MAX_REQUEST_BODY_SIZE_BYTES: &str = "IGLTC_MAX_REQUEST_BODY_SIZE_B
 pub const ENV_MAX_RESPONSE_BODY_SIZE_BYTES: &str = "IGLTC_MAX_RESPONSE_BODY_SIZE_BYTES";
 pub const ENV_WS_PING_INTERVAL_SECONDS: &str = "IGLTC_WS_PING_INTERVAL_SECONDS";
 
-pub const DEFAULT_BACKEND: Backend = Backend::Tendermint34;
+pub const DEFAULT_BACKEND: Backend = Backend::Comet34;
 pub const DEFAULT_BLOCKED_ROUTES: &str = "";
 pub const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:8080";
 pub const DEFAULT_MAX_CONNECTIONS: u32 = 1000;

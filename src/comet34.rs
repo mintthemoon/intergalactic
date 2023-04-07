@@ -16,32 +16,32 @@ use crate::config::Config;
 use crate::proxy::{ProxyGetRequestParamsLayer, ProxyGetRequestCustomLayer};
 
 #[derive(Deserialize, Serialize, Clone)]
-pub struct Tendermint34NodeInfo {
-	pub protocol_version: Tendermint34ProtocolVersion,
+pub struct Comet34NodeInfo {
+	pub protocol_version: Comet34ProtocolVersion,
 	pub id: String,
 	pub listen_addr: String,
 	pub network: String,
 	pub version: String,
 	pub channels: String,
 	pub moniker: String,
-	pub other: Tendermint34Other,
+	pub other: Comet34Other,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
-pub struct Tendermint34ProtocolVersion {
+pub struct Comet34ProtocolVersion {
 	pub p2p: String,
 	pub block: String,
 	pub app: String,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
-pub struct Tendermint34Other {
+pub struct Comet34Other {
 	pub tx_index: String,
 	pub rpc_address: String,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
-pub struct Tendermint34SyncInfo {
+pub struct Comet34SyncInfo {
 	pub latest_block_hash: String,
 	pub latest_app_hash: String,
 	pub latest_block_height: String,
@@ -54,27 +54,27 @@ pub struct Tendermint34SyncInfo {
 }
 
 #[derive(Deserialize, Serialize, Clone)]
-pub struct Tendermint34ValidatorInfo {
+pub struct Comet34ValidatorInfo {
 	pub address: String,
-	pub pub_key: Tendermint34PubKey,
+	pub pub_key: Comet34PubKey,
 	pub voting_power: String,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
-pub struct Tendermint34PubKey {
+pub struct Comet34PubKey {
 	#[serde(rename = "type")]
 	pub type_: String,
 	pub value: String,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
-pub struct Tendermint34Status {
-	pub node_info: Tendermint34NodeInfo,
-	pub sync_info: Tendermint34SyncInfo,
-	pub validator_info: Tendermint34ValidatorInfo,
+pub struct Comet34Status {
+	pub node_info: Comet34NodeInfo,
+	pub sync_info: Comet34SyncInfo,
+	pub validator_info: Comet34ValidatorInfo,
 }
 
-impl Tendermint34Status {
+impl Comet34Status {
 	pub fn strip_sensitive_info(&self) -> Self {
 		let mut status = self.clone();
 		status.node_info.moniker = "".to_string();
@@ -85,19 +85,19 @@ impl Tendermint34Status {
 	}
 }
 
-pub type Tendermint34Params = Vec<String>;
+pub type Comet34Params = Vec<String>;
 
-pub fn make_params(params: Vec<impl Into<String>>) -> Tendermint34Params {
+pub fn make_params(params: Vec<impl Into<String>>) -> Comet34Params {
 	params.into_iter().map(Into::into).collect()
 }
 
-pub struct Tendermint34Route {
+pub struct Comet34Route {
 	pub method: String,
-	pub params: Tendermint34Params,
+	pub params: Comet34Params,
 }
 
-impl Tendermint34Route {
-	pub fn new(method: String, params: Tendermint34Params) -> Self {
+impl Comet34Route {
+	pub fn new(method: String, params: Comet34Params) -> Self {
 		Self {
 			method,
 			params,
@@ -108,7 +108,7 @@ impl Tendermint34Route {
 		ProxyGetRequestParamsLayer::new(path, self.method.clone(), self.params.clone())
 	}
 
-	pub fn register_method(&'static self, backend: &'static Tendermint34Backend, module: &mut RpcModule<()>) -> Result<(), RpcError> {
+	pub fn register_method(&'static self, backend: &'static Comet34Backend, module: &mut RpcModule<()>) -> Result<(), RpcError> {
 		if !backend.blocked_routes.contains(&self.method) {
 			if self.method == "status" {
 				module.register_async_method(&self.method, |_, _| backend.status())?;
@@ -120,11 +120,11 @@ impl Tendermint34Route {
 	}
 }
 
-pub struct Tendermint34Backend {
+pub struct Comet34Backend {
 	pub blocked_routes: HashSet<String>,
 	pub listen_addr: SocketAddr,
 	pub http: HttpClient,
-	pub routes: HashMap<String, Tendermint34Route>,
+	pub routes: HashMap<String, Comet34Route>,
 	pub url: String,
 	pub max_connections: u32,
     pub max_subscriptions_per_connection: u32,
@@ -133,7 +133,7 @@ pub struct Tendermint34Backend {
     pub ws_ping_interval_seconds: u32,
 }
 
-impl TryFrom<Config> for Tendermint34Backend {
+impl TryFrom<Config> for Comet34Backend {
 	type Error = Error;
 
 	fn try_from(config: Config) -> Result<Self> {
@@ -150,7 +150,7 @@ impl TryFrom<Config> for Tendermint34Backend {
 	}
 }
 
-impl Tendermint34Backend {
+impl Comet34Backend {
 	pub fn new(
 		url: &str,
 		listen_addr: &str,
@@ -205,8 +205,8 @@ impl Tendermint34Backend {
 		Ok(backend)
 	}
 
-	pub fn add_proxy_route(&mut self, path: impl Into<String>, method: impl Into<String>, params: Tendermint34Params) {
-		self.routes.insert(path.into(), Tendermint34Route::new(method.into(), params));
+	pub fn add_proxy_route(&mut self, path: impl Into<String>, method: impl Into<String>, params: Comet34Params) {
+		self.routes.insert(path.into(), Comet34Route::new(method.into(), params));
 	}
 
 	pub fn route_proxy_layer(&self, path: impl Into<String>) -> Result<ProxyGetRequestParamsLayer> {
@@ -269,7 +269,7 @@ impl Tendermint34Backend {
 
 	pub async fn status(&'static self) -> Result<JsonValue, RpcError> {
 		let res = self.http.request("status", rpc_params![]).await?;
-		let status: Tendermint34Status = serde_json::from_value(res)?;
+		let status: Comet34Status = serde_json::from_value(res)?;
 		serde_json::to_value(status.strip_sensitive_info()).map_err(RpcError::from)
 	}
 

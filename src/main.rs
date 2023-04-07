@@ -1,12 +1,12 @@
 mod backend;
 mod config;
 mod proxy;
-mod tendermint34;
+mod comet34;
 
 use std::env;
 use anyhow::Result;
 use tracing_subscriber::{util::SubscriberInitExt, EnvFilter, FmtSubscriber};
-use crate::backend::TENDERMINT34;
+use crate::backend::COMET34;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -15,7 +15,7 @@ async fn main() -> Result<()> {
 	}
     let filter = EnvFilter::try_from_default_env()?;
 	FmtSubscriber::builder().with_env_filter(filter).finish().try_init()?;
-    if let Err(e) = TENDERMINT34.start().await {
+    if let Err(e) = COMET34.start().await {
 		tracing::error!("fatal error: {}", e);
 	}
 	Ok(())
