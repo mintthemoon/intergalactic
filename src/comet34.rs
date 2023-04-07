@@ -78,10 +78,10 @@ pub struct Comet34Status {
 impl Comet34Status {
 	pub fn strip_sensitive_info(&self) -> Self {
 		let mut status = self.clone();
-		status.node_info.moniker = "".to_string();
-		status.node_info.listen_addr = "".to_string();
-		status.node_info.other.rpc_address = "".to_string();
-		status.node_info.version = "".to_string();
+		status.node_info.moniker = "REDACTED".to_string();
+		status.node_info.listen_addr = "REDACTED".to_string();
+		status.node_info.other.rpc_address = "REDACTED".to_string();
+		status.node_info.version = "REDACTED".to_string();
 		status
 	}
 }
