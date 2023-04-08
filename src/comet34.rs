@@ -113,36 +113,11 @@ pub fn make_params(params: Vec<impl Into<String>>) -> Comet34Params {
 	params.into_iter().map(Into::into).collect()
 }
 
-pub struct Comet34Route {
-	pub method: String,
-	pub params: Comet34Params,
-}
-
-impl Comet34Route {
-	pub fn new(method: String, params: Comet34Params) -> Self {
-		Self {
-			method,
-			params,
-		}
-	}
-
-	pub fn register_method(&'static self, backend: &'static Comet34Backend, module: &mut RpcModule<()>) -> Result<(), RpcError> {
-		if !backend.blocked_routes.contains(&self.method) {
-			if self.method == "status" {
-				module.register_async_method(&self.method, |_, _| backend.status())?;
-			} else {
-				module.register_async_method(&self.method, |p, _| backend.proxy_call(&self.method, p))?;
-			}
-		}
-		Ok(())
-	}
-}
-
 pub struct Comet34Backend {
 	pub blocked_routes: HashSet<String>,
 	pub listen_addr: SocketAddr,
 	pub http: HttpClient,
-	pub routes: HashMap<String, Comet34Route>,
+	pub routes: HashMap<String, Comet34Params>,
 	pub url: String,
 	pub max_connections: u32,
     pub max_subscriptions_per_connection: u32,
@@ -195,40 +170,52 @@ impl Comet34Backend {
 			ws_ping_interval_seconds,
 			validator_info,
 		};
-		backend.add_proxy_route("/abci_info", "abci_info", vec![]);
-		backend.add_proxy_route("/abci_query", "abci_query", make_params(vec!["path", "data", "height", "prove"]));
-		backend.add_proxy_route("/block", "block", make_params(vec!["height"]));
-		backend.add_proxy_route("/block_by_hash", "block_by_hash", make_params(vec!["hash"]));
-		backend.add_proxy_route("/block_results", "block_results", make_params(vec!["height"]));
-		backend.add_proxy_route("/block_search", "block_search", make_params(vec!["query", "page", "per_page", "order_by", "match_events"]));
-		backend.add_proxy_route("/blockchain", "blockchain", make_params(vec!["minHeight", "maxHeight"]));
-		backend.add_proxy_route("/broadcast_evidence", "broadcast_evidence", make_params(vec!["evidence"]));
-		backend.add_proxy_route("/broadcast_tx_async", "broadcast_tx_async", make_params(vec!["tx"]));
-		backend.add_proxy_route("/broadcast_tx_commit", "broadcast_tx_commit", make_params(vec!["tx"]));
-		backend.add_proxy_route("/broadcast_tx_sync", "broadcast_tx_sync", make_params(vec!["tx"]));
-		backend.add_proxy_route("/check_tx", "check_tx", make_params(vec!["tx"]));
-		backend.add_proxy_route("/commit", "commit", make_params(vec!["height"]));
-		backend.add_proxy_route("/consensus_params", "consensus_params", make_params(vec!["height"]));
-		backend.add_proxy_route("/consensus_state", "consensus_state", vec![]);
-		backend.add_proxy_route("/dump_consensus_state", "dump_consensus_state", vec![]);
-		backend.add_proxy_route("/genesis", "genesis", vec![]);
-		backend.add_proxy_route("/genesis_chunked", "genesis_chunked", make_params(vec!["chunk"]));
-		backend.add_proxy_route("/health", "health", vec![]);
-		backend.add_proxy_route("/net_info", "net_info", vec![]);
-		backend.add_proxy_route("/num_unconfirmed_txs", "num_unconfirmed_txs", vec![]);
-		backend.add_proxy_route("/status", "status", vec![]);
-		backend.add_proxy_route("/subscribe", "subscribe", make_params(vec!["query"]));
-		backend.add_proxy_route("/tx", "tx", make_params(vec!["hash", "prove"]));
-		backend.add_proxy_route("/tx_search", "tx_search", make_params(vec!["query", "page", "per_page", "order_by", "match_events"]));
-		backend.add_proxy_route("/unconfirmed_txs", "unconfirmed_txs", make_params(vec!["limit"]));
-		backend.add_proxy_route("/unsubscribe_all", "unsubscribe_all", vec![]);
-		backend.add_proxy_route("/unsubscribe", "unsubscribe", make_params(vec!["query"]));
-		backend.add_proxy_route("/validators", "validators", make_params(vec!["height", "page", "per_page"]));
+		backend.add_route("abci_info", vec![]);
+		backend.add_route("abci_query", make_params(vec!["path", "data", "height", "prove"]));
+		backend.add_route("block", make_params(vec!["height"]));
+		backend.add_route("block_by_hash", make_params(vec!["hash"]));
+		backend.add_route("block_results", make_params(vec!["height"]));
+		backend.add_route("block_search", make_params(vec!["query", "page", "per_page", "order_by", "match_events"]));
+		backend.add_route("blockchain", make_params(vec!["minHeight", "maxHeight"]));
+		backend.add_route("broadcast_evidence", make_params(vec!["evidence"]));
+		backend.add_route("broadcast_tx_async", make_params(vec!["tx"]));
+		backend.add_route("broadcast_tx_commit", make_params(vec!["tx"]));
+		backend.add_route("broadcast_tx_sync", make_params(vec!["tx"]));
+		backend.add_route("check_tx", make_params(vec!["tx"]));
+		backend.add_route("commit", make_params(vec!["height"]));
+		backend.add_route("consensus_params", make_params(vec!["height"]));
+		backend.add_route("consensus_state", vec![]);
+		backend.add_route("dump_consensus_state", vec![]);
+		backend.add_route("genesis", vec![]);
+		backend.add_route("genesis_chunked", make_params(vec!["chunk"]));
+		backend.add_route("health", vec![]);
+		backend.add_route("net_info", vec![]);
+		backend.add_route("num_unconfirmed_txs", vec![]);
+		backend.add_route("status", vec![]);
+		backend.add_route("subscribe", make_params(vec!["query"]));
+		backend.add_route("tx", make_params(vec!["hash", "prove"]));
+		backend.add_route("tx_search", make_params(vec!["query", "prove", "page", "per_page", "order_by", "match_events"]));
+		backend.add_route("unconfirmed_txs", make_params(vec!["limit"]));
+		backend.add_route("unsubscribe_all", vec![]);
+		backend.add_route("unsubscribe", make_params(vec!["query"]));
+		backend.add_route("validators", make_params(vec!["height", "page", "per_page"]));
 		Ok(backend)
 	}
 
-	pub fn add_proxy_route(&mut self, path: impl Into<String>, method: impl Into<String>, params: Comet34Params) {
-		self.routes.insert(path.into(), Comet34Route::new(method.into(), params));
+	pub fn add_route(&mut self, method: impl Into<String>, params: Comet34Params) {
+		self.routes.insert(method.into(), params);
+	}
+
+	pub fn register_route(&'static self, module: &mut RpcModule<()>, method: &'static String) -> Result<(), RpcError> {
+		if !self.blocked_routes.contains(method) {
+			match method.as_str() {
+				"status" => { module.register_async_method(method, |_, _| self.status())?; },
+				"tx_search" => { module.register_async_method(method, |p, _| self.tx_search(p))?; },
+				_ => { module.register_async_method(method, |p, _| self.proxy_call(method, p))?; },
+			}
+			tracing::debug!("registered route: {}", method);
+		}
+		Ok(())
 	}
 
 	pub async fn start(&'static self) -> Result<()> {
@@ -247,7 +234,7 @@ impl Comet34Backend {
 		let mut module = RpcModule::new(());
 		self.routes
 			.iter()
-			.map(|(_, route)| route.register_method(&self, &mut module))
+			.map(|(method, _)| self.register_route(&mut module, method))
 			.collect::<Result<Vec<_>, RpcError>>()?;
 		let handle = server.start(module)?;
 		tracing::info!("server started");
@@ -262,10 +249,67 @@ impl Comet34Backend {
 		serde_json::to_value(status.strip_sensitive_info(Some(&self.validator_info))).map_err(RpcError::from)
 	}
 
+	pub async fn tx_search(&'static self, params: Params<'static>) -> Result<JsonValue, RpcError> {
+		let params_json: JsonValue = params.parse()?;
+		let query = match params_json {
+			JsonValue::Object(o) => {
+				if o.contains_key("prove") || o.contains_key("per_page") || o.contains_key("order_by") || o.contains_key("match_events") {
+					return Err(RpcError::Call(CallError::InvalidParams(anyhow!("unsupported parameter(s)"))));
+				}
+				o.get("page").map(|p|
+					if serde_json::to_string(p)? != "\"1\"" { Err(RpcError::Call(CallError::InvalidParams(anyhow!("pagination not supported")))) }
+					else { Ok(()) }
+				).transpose()?;
+				o.get("query").ok_or(RpcError::Call(CallError::InvalidParams(anyhow!("must provide parameter: query"))))?.clone()
+			},
+			JsonValue::Array(a) => {
+				if a.len() != 6 {
+					return Err(RpcError::Call(CallError::InvalidParams(
+						anyhow!("expected 6 parameter(s), got {}", a.len())
+					)));
+				}
+				a[2..].iter()
+					.map(|p| 
+						if p.is_null() { Ok(()) }
+						else { Err(RpcError::Call(CallError::InvalidParams(anyhow!("unsupported parameter: {}", p)))) }
+					)
+					.collect::<Result<Vec<_>, RpcError>>()?;
+				a[0].clone()
+			},
+			_ => return Err(RpcError::Call(CallError::InvalidParams(
+				anyhow!("expected object or array, got {}", params_json)
+			))),
+		};
+		let query_parts = query
+			.as_str()
+			.ok_or(RpcError::Call(CallError::InvalidParams(anyhow!("query must be a string"))))?
+			.trim_matches('"')
+			.split('=')
+			.collect::<Vec<&str>>();
+		if query_parts.len() != 2 {
+			return Err(RpcError::Call(CallError::InvalidParams(anyhow!("query must be in the form key=value"))));
+		}
+		if query_parts[0] != "tx.hash" {
+			return Err(RpcError::Call(CallError::InvalidParams(anyhow!("only tx.hash queries are supported"))));
+		}
+		let tx_hash = query_parts[1].trim_matches('\'');
+		if tx_hash.len() != 64 || !tx_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+			return Err(RpcError::Call(CallError::InvalidParams(anyhow!("tx.hash must be 64 characters long and contain only hex digits"))));
+		}
+		let mut params = ArrayParams::new();
+		params.insert(&query)?;
+		params.insert(&JsonValue::Null)?;
+		params.insert(&JsonValue::Null)?;
+		params.insert(&JsonValue::Null)?;
+		params.insert(&JsonValue::Null)?;
+		params.insert(&JsonValue::Null)?;
+		self.http.request("tx_search", params).await
+	}
+
 	pub async fn proxy_call(&'static self, method: &str, params: Params<'static>) -> Result<JsonValue, RpcError> {
 		let params_json: JsonValue = params.parse()?;
-		let method_params = &self.routes.get(&format!("/{}", method))
-			.ok_or(RpcError::MethodNotFound(method.to_string()))?.params;
+		let method_params = self.routes.get(method)
+			.ok_or(RpcError::MethodNotFound(method.to_string()))?;
 		let params = match params_json {
 			JsonValue::Object(o) => {
 				let mut params = ArrayParams::new();

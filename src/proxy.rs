@@ -67,7 +67,7 @@ where
 				.query()
 				.map(|v| url::form_urlencoded::parse(v.as_bytes())
 					.into_owned()
-					.map(|(k, v)| (k, serde_json::to_value(v).expect("valid query param")))
+					.map(|(k, v)| (k, serde_json::to_value(v.trim_matches('"')).expect("valid query param")))
 					.collect()
 				)
 				.unwrap_or_else(HashMap::new);
