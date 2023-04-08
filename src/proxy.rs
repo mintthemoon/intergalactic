@@ -16,19 +16,11 @@ use serde_json::{value::to_raw_value, Value as JsonValue};
 use tower::{Layer, Service};
 
 #[derive(Debug, Clone)]
-pub struct ProxyGetRequestParamsLayer {
-	path: String,
-	method: String,
-	params: Vec<String>,
-}
+pub struct ProxyGetRequestParamsLayer {}
 
 impl ProxyGetRequestParamsLayer {
-	pub fn new(path: impl Into<String>, method: impl Into<String>, params: Vec<String>) -> Result<Self, jsonrpsee::core::Error> {
-		let path = path.into();
-		if !path.starts_with('/') {
-			return Err(jsonrpsee::core::Error::Custom("ProxyGetRequestParamsLayer path must start with `/`".to_string()));
-		}
-		Ok(Self { path, method: method.into(), params })
+	pub fn new() -> Self {
+		Self {}
 	}
 }
 
@@ -36,26 +28,18 @@ impl<S> Layer<S> for ProxyGetRequestParamsLayer {
 	type Service = ProxyGetRequestParams<S>;
 
 	fn layer(&self, inner: S) -> Self::Service {
-		ProxyGetRequestParams::new(inner, &self.path, &self.method, &self.params)
-			.expect("Path already validated in ProxyGetRequestParamsLayer; qed")
+		ProxyGetRequestParams::new(inner)
 	}
 }
 
 #[derive(Debug, Clone)]
 pub struct ProxyGetRequestParams<S> {
 	inner: S,
-	path: Arc<str>,
-	method: Arc<str>,
-	params: Arc<Vec<String>>,
 }
 
 impl<S> ProxyGetRequestParams<S> {
-	pub fn new(inner: S, path: &str, method: &str, params: &Vec<String>) -> Result<Self, jsonrpsee::core::Error> {
-		if !path.starts_with('/') {
-			return Err(jsonrpsee::core::Error::Custom(format!("ProxyGetRequestParams path must start with `/`, got: {}", path)));
-		}
-
-		Ok(Self { inner, path: Arc::from(path), method: Arc::from(method), params: Arc::from(params.clone()) })
+	pub fn new(inner: S) -> Self {
+		Self { inner }
 	}
 }
 
@@ -76,9 +60,9 @@ where
 	}
 
 	fn call(&mut self, mut req: Request<Body>) -> Self::Future {
-		let modify = self.path.as_ref() == req.uri().path() && req.method() == Method::GET;
+		let modify = req.uri().path() != "/" && req.method() == Method::GET;
 		if modify {
-			let req_params: HashMap<String, JsonValue> = req
+			let params_map: HashMap<String, JsonValue> = req
 				.uri()
 				.query()
 				.map(|v| url::form_urlencoded::parse(v.as_bytes())
@@ -87,18 +71,14 @@ where
 					.collect()
 				)
 				.unwrap_or_else(HashMap::new);
+			let params_raw = to_raw_value(&params_map).expect("valid params");
+			let method = req.uri().path().trim_start_matches('/').to_string();
 			*req.method_mut() = Method::POST;
 			*req.uri_mut() = Uri::from_static("/");
 			req.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 			req.headers_mut().insert(ACCEPT, HeaderValue::from_static("application/json"));
-			let params: JsonValue = self.params
-				.iter()
-				.map(|p| req_params.get(p).unwrap_or(&JsonValue::Null).clone())
-				.collect::<Vec<JsonValue>>()
-				.into();
-			let params_raw = to_raw_value(&params).expect("valid params");
 			let body = Body::from(
-				serde_json::to_string(&RequestSer::borrowed(&Id::Number(0), &self.method, Some(params_raw.as_ref())))
+				serde_json::to_string(&RequestSer::borrowed(&Id::Number(0), &method, Some(params_raw.as_ref())))
 					.expect("valid request"),
 			);
 			req = req.map(|_| body);

@@ -126,10 +126,6 @@ impl Comet34Route {
 		}
 	}
 
-	pub fn proxy_get_layer(&self, path: String) -> Result<ProxyGetRequestParamsLayer, RpcError> {
-		ProxyGetRequestParamsLayer::new(path, self.method.clone(), self.params.clone())
-	}
-
 	pub fn register_method(&'static self, backend: &'static Comet34Backend, module: &mut RpcModule<()>) -> Result<(), RpcError> {
 		if !backend.blocked_routes.contains(&self.method) {
 			if self.method == "status" {
@@ -235,43 +231,9 @@ impl Comet34Backend {
 		self.routes.insert(path.into(), Comet34Route::new(method.into(), params));
 	}
 
-	pub fn route_proxy_layer(&self, path: impl Into<String>) -> Result<ProxyGetRequestParamsLayer> {
-		let path = path.into();
-		let route = self.routes.get(&path).ok_or(anyhow!("route not found: {}", path))?;
-		route.proxy_get_layer(path).map_err(Error::from)
-	}
-
 	pub async fn start(&'static self) -> Result<()> {
 		let service_builder = ServiceBuilder::default()
-			.layer(self.route_proxy_layer("/abci_info")?)
-			.layer(self.route_proxy_layer("/abci_query")?)
-			.layer(self.route_proxy_layer("/block")?)
-			.layer(self.route_proxy_layer("/block_by_hash")?)
-			.layer(self.route_proxy_layer("/block_results")?)
-			.layer(self.route_proxy_layer("/block_search")?)
-			.layer(self.route_proxy_layer("/blockchain")?)
-			.layer(self.route_proxy_layer("/broadcast_evidence")?)
-			.layer(self.route_proxy_layer("/broadcast_tx_async")?)
-			.layer(self.route_proxy_layer("/broadcast_tx_commit")?)
-			.layer(self.route_proxy_layer("/broadcast_tx_sync")?)
-			.layer(self.route_proxy_layer("/check_tx")?)
-			.layer(self.route_proxy_layer("/commit")?)
-			.layer(self.route_proxy_layer("/consensus_params")?)
-			.layer(self.route_proxy_layer("/consensus_state")?)
-			.layer(self.route_proxy_layer("/dump_consensus_state")?)
-			.layer(self.route_proxy_layer("/genesis")?)
-			.layer(self.route_proxy_layer("/genesis_chunked")?)
-			.layer(self.route_proxy_layer("/health")?)
-			.layer(self.route_proxy_layer("/net_info")?)
-			.layer(self.route_proxy_layer("/num_unconfirmed_txs")?)
-			.layer(self.route_proxy_layer("/status")?)
-			.layer(self.route_proxy_layer("/subscribe")?)
-			.layer(self.route_proxy_layer("/tx")?)
-			.layer(self.route_proxy_layer("/tx_search")?)
-			.layer(self.route_proxy_layer("/unconfirmed_txs")?)
-			.layer(self.route_proxy_layer("/unsubscribe")?)
-			.layer(self.route_proxy_layer("/unsubscribe_all")?)
-			.layer(self.route_proxy_layer("/validators")?)
+			.layer(ProxyGetRequestParamsLayer::new())
 			.layer(ProxyGetRequestCustomLayer::new("/", &root_html_proxy_call)?)
 			.layer(CorsLayer::new().allow_methods(vec![Method::GET, Method::POST]).allow_origin(Any).allow_headers(Any));
 		let server = ServerBuilder::default()
