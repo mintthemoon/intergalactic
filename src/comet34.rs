@@ -64,10 +64,7 @@ pub struct Comet34ValidatorInfo {
 }
 
 impl Comet34ValidatorInfo {
-	const ADDR_CHARS: [char; 36] = [
-		'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
-		'0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-	];
+	const ADDR_CHARS: [char; 16] = ['A', 'B', 'C', 'D', 'E', 'F', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
 	pub fn new() -> Result<Self> {
 		let mut rng = OsRng::default();
